@@ -170,7 +170,7 @@ function AuthScreen() {
         emoji,
         joined_at: new Date().toISOString().split("T")[0]
       });
-      if (profileErr) { setLoading(false); setError("Profile creation failed: " + profileErr.message); return; }
+      if (profileErr) { setLoading(false); setError("Profile creation failed: " + profileErr.message + " (check Supabase RLS policies)"); return; }
 
       // Mark invite used
       if (count > 0) {
@@ -449,6 +449,7 @@ export default function SandwichDiary() {
   const [copied, setCopied] = useState(null);
   const [peopleSearch, setPeopleSearch] = useState("");
   const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const fileRef = useRef();
 
   const [form, setForm] = useState({
@@ -479,11 +480,13 @@ export default function SandwichDiary() {
 
   async function loadProfile(userId) {
     try {
-      // Get the auth user's email, then find matching profile
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) { setLoading(false); return; }
+      const { data: { user }, error: userErr } = await supabase.auth.getUser();
+      if (userErr || !user) { setLoadError("Auth error: " + (userErr?.message || "no user")); setLoading(false); return; }
+
       const { data, error } = await supabase.from("profiles").select("*").eq("email", user.email.toLowerCase()).maybeSingle();
-      if (error || !data) { setLoading(false); return; }
+      if (error) { setLoadError("Profile fetch error: " + error.message); setLoading(false); return; }
+      if (!data) { setLoadError("No profile found for " + user.email + " — try signing up first"); setLoading(false); return; }
+
       setProfile(data);
       await Promise.all([
         loadEntries(),
@@ -492,7 +495,7 @@ export default function SandwichDiary() {
         loadInvites(data.username)
       ]);
     } catch (e) {
-      console.error("loadProfile error:", e);
+      setLoadError("Unexpected error: " + e.message);
     } finally {
       setLoading(false);
     }
@@ -720,7 +723,22 @@ export default function SandwichDiary() {
     );
   }
 
-  if (loading) return <div className="loading-screen">Stacked ★</div>;
+  if (loading) return (
+    <div className="loading-screen" style={{ flexDirection:"column", gap:16 }}>
+      <div>Stacked ★</div>
+      {loadError && (
+        <div style={{ fontFamily:"'Courier Prime',monospace", fontSize:13, color:"#F07828", background:"rgba(0,0,0,0.3)", padding:"12px 16px", borderRadius:4, maxWidth:320, textAlign:"center", lineHeight:1.5 }}>
+          {loadError}
+          <div style={{ marginTop:12 }}>
+            <button onClick={() => supabase.auth.signOut().then(() => { setLoadError(""); setLoading(false); })}
+              style={{ fontFamily:"'Special Elite',serif", fontSize:11, padding:"6px 14px", background:"#F07828", color:"#1A2744", border:"none", borderRadius:2, cursor:"pointer", letterSpacing:1 }}>
+              Sign out and try again
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
   if (!profile) return <AuthScreen />;
 
   return (
