@@ -146,32 +146,51 @@ function AuthScreen() {
 
     setLoading(true); setError("");
 
-    // Check invite code (unless first user)
-    const { count } = await supabase.from("profiles").select("*", { count:"exact", head:true });
-    if (count > 0) {
-      const { data: inv } = await supabase.from("invites").select("*").eq("code", invite.toUpperCase()).eq("used", false).single();
-      if (!inv) { setLoading(false); setError("Invalid or already used invite code"); return; }
+    try {
+      // Check invite code (unless first user)
+      const { count } = await supabase.from("profiles").select("*", { count:"exact", head:true });
+      if (count > 0) {
+        const { data: inv } = await supabase.from("invites").select("*").eq("code", invite.toUpperCase()).eq("used", false).single();
+        if (!inv) { setLoading(false); setError("Invalid or already used invite code"); return; }
+      }
+
+      // Check username not taken
+      const { data: existing } = await supabase.from("profiles").select("username").eq("username", username).maybeSingle();
+      if (existing) { setLoading(false); setError("Username already taken"); return; }
+
+      // Create auth user — email confirmation disabled so session is returned immediately
+      const { data: authData, error: authErr } = await supabase.auth.signUp({ email, password });
+      if (authErr) { setLoading(false); setError(authErr.message); return; }
+      if (!authData.user) { setLoading(false); setError("Signup failed — please try again"); return; }
+
+      // Insert profile using service-style upsert
+      const { error: profileErr } = await supabase.from("profiles").upsert({
+        username,
+        email: email.toLowerCase(),
+        emoji,
+        joined_at: new Date().toISOString().split("T")[0]
+      });
+      if (profileErr) { setLoading(false); setError("Profile creation failed: " + profileErr.message); return; }
+
+      // Mark invite used
+      if (count > 0) {
+        await supabase.from("invites").update({ used: true }).eq("code", invite.toUpperCase());
+      }
+
+      // If session exists immediately (email confirm disabled), load straight in
+      if (authData.session) {
+        // onAuthStateChange will fire and handle the rest
+        return;
+      }
+
+      setLoading(false);
+      setSuccess("Account created! Check your email to confirm, then sign in.");
+      setMode("login");
+
+    } catch (e) {
+      setLoading(false);
+      setError("Something went wrong: " + e.message);
     }
-
-    // Check username not taken
-    const { data: existing } = await supabase.from("profiles").select("id").eq("username", username).single();
-    if (existing) { setLoading(false); setError("Username already taken"); return; }
-
-    // Create auth user
-    const { data: authData, error: authErr } = await supabase.auth.signUp({ email, password });
-    if (authErr) { setLoading(false); setError(authErr.message); return; }
-
-    // Create profile
-    await supabase.from("profiles").insert({ id: authData.user.id, username, email: email.toLowerCase(), emoji, joined_at: new Date().toISOString().split("T")[0] });
-
-    // Mark invite used
-    if (count > 0) {
-      await supabase.from("invites").update({ used: true }).eq("code", invite.toUpperCase());
-    }
-
-    setLoading(false);
-    setSuccess("Account created! Check your email to confirm, then sign in.");
-    setMode("login");
   }
 
   async function doResetRequest() {
@@ -460,7 +479,10 @@ export default function SandwichDiary() {
 
   async function loadProfile(userId) {
     try {
-      const { data, error } = await supabase.from("profiles").select("*").eq("id", userId).single();
+      // Get the auth user's email, then find matching profile
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { setLoading(false); return; }
+      const { data, error } = await supabase.from("profiles").select("*").eq("email", user.email.toLowerCase()).maybeSingle();
       if (error || !data) { setLoading(false); return; }
       setProfile(data);
       await Promise.all([
