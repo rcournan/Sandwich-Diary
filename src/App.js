@@ -1,60 +1,34 @@
 import { useState, useRef, useEffect } from "react";
+import { createClient } from "@supabase/supabase-js";
 
-// ── Storage helpers ──────────────────────────────────────────────────────────
-const LS = {
-  get: (k, fallback = null) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fallback; } catch { return fallback; } },
-  set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
-};
+// ── Supabase client ───────────────────────────────────────────────────────────
+const supabase = createClient(
+  "https://rxfwwmqutybninaqypwj.supabase.co",
+  "sb_publishable_JmUTYmMU0AjJyGk8C2t8ww_URNDmcYA"
+);
 
-// Shared keys (all users on same browser share these — replace with Supabase for real multi-device)
-const USERS_KEY   = "sd_users";      // { [username]: { username, emoji, passwordHash, joinedAt } }
-const ENTRIES_KEY = "sd_entries";    // Entry[]
-const INVITES_KEY = "sd_invites";    // string[] of valid invite codes
-const SESSION_KEY = "sd_session";    // currently logged-in username
-
-// Simple hash (good enough for local; use bcrypt on a real backend)
-const hash = (s) => [...s].reduce((a, c) => (Math.imul(31, a) + c.charCodeAt(0)) | 0, 0).toString(36);
-
-// Generate a readable invite code
 const makeCode = () => Math.random().toString(36).slice(2, 8).toUpperCase();
-
 const AVATARS = ["🥪","🍞","🥓","🧀","🥬","🍅","🫙","🥒","🌶","🧅","🥩","🫒"];
 const SENTIMENTS = ["🤩","😋","😌","🥹","🔥","😐","😬","💀"];
 const BREAD_TYPES = ["Sourdough","Ciabatta","Baguette","Focaccia","Brioche","Rye","Cuban","Hoagie","Wrap","White","Wheat","Other"];
 
-// Seed demo data if first launch
-function seedIfEmpty() {
-  const invites = LS.get(INVITES_KEY, null);
-  if (invites === null) {
-    LS.set(INVITES_KEY, [makeCode(), makeCode(), makeCode()]);
-  }
-}
-
-// ── Photo Carousel ───────────────────────────────────────────────────────────
+// ── Photo Carousel ────────────────────────────────────────────────────────────
 function PhotoCarousel({ photos, name }) {
   const [idx, setIdx] = useState(0);
   const list = photos && photos.length > 0 ? photos : null;
-
   if (!list) return <div className="card-photo-placeholder">🥪</div>;
-
   return (
     <div className="photo-carousel">
       <div className="photo-carousel-track" style={{ transform:`translateX(-${idx * 100}%)` }}>
-        {list.map((p, i) => (
-          <img key={i} src={p} className="card-photo" alt={`${name} ${i+1}`} />
-        ))}
+        {list.map((p, i) => <img key={i} src={p} className="card-photo" alt={`${name} ${i+1}`} />)}
       </div>
-      {list.length > 1 && (
-        <>
-          {idx > 0 && <button className="photo-nav prev" onClick={() => setIdx(i => i - 1)}>‹</button>}
-          {idx < list.length - 1 && <button className="photo-nav next" onClick={() => setIdx(i => i + 1)}>›</button>}
-          <div className="photo-dot-row">
-            {list.map((_, i) => (
-              <button key={i} className={`photo-dot ${i === idx ? "active" : ""}`} onClick={() => setIdx(i)} />
-            ))}
-          </div>
-        </>
-      )}
+      {list.length > 1 && (<>
+        {idx > 0 && <button className="photo-nav prev" onClick={() => setIdx(i => i-1)}>‹</button>}
+        {idx < list.length-1 && <button className="photo-nav next" onClick={() => setIdx(i => i+1)}>›</button>}
+        <div className="photo-dot-row">
+          {list.map((_, i) => <button key={i} className={`photo-dot ${i===idx?"active":""}`} onClick={() => setIdx(i)} />)}
+        </div>
+      </>)}
     </div>
   );
 }
@@ -88,8 +62,8 @@ function SandwichMap({ entries, currentUser }) {
       hs.src = "https://cdnjs.cloudflare.com/ajax/libs/leaflet.heat/0.2.0/leaflet-heat.js";
       hs.onload = () => {
         const L = window.L;
-        const map = L.map(mapRef.current, { zoomControl: true }).setView([42.36,-71.06], 11);
-        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "© OpenStreetMap", maxZoom: 19 }).addTo(map);
+        const map = L.map(mapRef.current, { zoomControl:true }).setView([42.36,-71.06], 11);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution:"© OpenStreetMap", maxZoom:19 }).addTo(map);
         mapInstanceRef.current = map;
         renderMarkers();
       };
@@ -140,83 +114,79 @@ function SandwichMap({ entries, currentUser }) {
 
 // ── Auth Screen ───────────────────────────────────────────────────────────────
 function AuthScreen({ onLogin }) {
-  const [mode, setMode] = useState("login"); // login | signup | reset | reset-confirm
+  const [mode, setMode] = useState("login");
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [invite, setInvite] = useState("");
   const [emoji, setEmoji] = useState("🥪");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const inputStyle = { width:"100%", fontFamily:"'Courier Prime',monospace", fontSize:13, padding:"8px 10px", border:"2px solid #7DD8D0", borderRadius:2, background:"white", color:"#1A2744" };
   const labelStyle = { fontFamily:"'Special Elite',serif", fontSize:10, letterSpacing:2, textTransform:"uppercase", color:"#1A2744", display:"block", marginBottom:4 };
+  const cardStyle = { background:"#FFFDF8", border:"2px solid #7DD8D0", borderRadius:4, padding:24, width:"100%", maxWidth:360 };
+  const btnPrimary = { width:"100%", fontFamily:"'Alfa Slab One',serif", fontSize:15, letterSpacing:2, padding:13, background: loading ? "#ccc" : "#F07828", color:"#1A2744", border:"3px solid #1A2744", borderRadius:2, cursor: loading ? "wait" : "pointer", textTransform:"uppercase", boxShadow:"3px 3px 0 #1A2744", marginTop:4 };
 
-  function doLogin() {
-    const users = LS.get(USERS_KEY, {});
-    const user = users[username];
-    if (!user) { setError("Username not found"); return; }
-    if (user.passwordHash !== hash(password)) { setError("Wrong password"); return; }
-    LS.set(SESSION_KEY, username);
-    onLogin(username);
+  async function doLogin() {
+    if (!email.trim() || !password.trim()) { setError("Email and password required"); return; }
+    setLoading(true); setError("");
+    const { error: err } = await supabase.auth.signInWithPassword({ email, password });
+    setLoading(false);
+    if (err) { setError(err.message); return; }
+    const { data: { user } } = await supabase.auth.getUser();
+    const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single();
+    onLogin(profile);
   }
 
-  function doSignup() {
-    if (!username.trim() || !password.trim() || !email.trim()) { setError("All fields required"); return; }
+  async function doSignup() {
+    if (!username.trim() || !email.trim() || !password.trim()) { setError("All fields required"); return; }
     if (username.length < 3) { setError("Username must be at least 3 characters"); return; }
     if (!email.includes("@")) { setError("Please enter a valid email"); return; }
     if (password.length < 6) { setError("Password must be at least 6 characters"); return; }
-    const users = LS.get(USERS_KEY, {});
-    const isFirstUser = Object.keys(users).length === 0;
-    if (!isFirstUser) {
-      const codes = LS.get(INVITES_KEY, []);
-      if (!codes.includes(invite.toUpperCase())) { setError("Invalid invite code"); return; }
-      LS.set(INVITES_KEY, codes.filter(c => c !== invite.toUpperCase()));
+
+    setLoading(true); setError("");
+
+    // Check invite code (unless first user)
+    const { count } = await supabase.from("profiles").select("*", { count:"exact", head:true });
+    if (count > 0) {
+      const { data: inv } = await supabase.from("invites").select("*").eq("code", invite.toUpperCase()).eq("used", false).single();
+      if (!inv) { setLoading(false); setError("Invalid or already used invite code"); return; }
     }
-    if (users[username]) { setError("Username already taken"); return; }
-    const emailTaken = Object.values(users).some(u => u.email === email.toLowerCase());
-    if (emailTaken) { setError("An account with that email already exists"); return; }
-    users[username] = { username, email: email.toLowerCase(), emoji, passwordHash: hash(password), joinedAt: new Date().toISOString().split("T")[0] };
-    LS.set(USERS_KEY, users);
-    LS.set(SESSION_KEY, username);
-    onLogin(username);
-  }
 
-  function doResetRequest() {
-    const users = LS.get(USERS_KEY, {});
-    const user = Object.values(users).find(u => u.email === email.toLowerCase());
-    if (!user) { setError("No account found with that email"); return; }
-    // Store a reset token against the username
-    const token = makeCode() + makeCode();
-    LS.set(`sd_reset_${token}`, { username: user.username, expires: Date.now() + 1000 * 60 * 30 });
-    setSuccess(`Since this app stores data locally, paste this reset code on the next screen:
+    // Check username not taken
+    const { data: existing } = await supabase.from("profiles").select("id").eq("username", username).single();
+    if (existing) { setLoading(false); setError("Username already taken"); return; }
 
-${token}
+    // Create auth user
+    const { data: authData, error: authErr } = await supabase.auth.signUp({ email, password });
+    if (authErr) { setLoading(false); setError(authErr.message); return; }
 
-(In production with Supabase this would arrive by email)`);
-    setMode("reset-confirm");
-    setEmail("");
-  }
+    // Create profile
+    await supabase.from("profiles").insert({ id: authData.user.id, username, email: email.toLowerCase(), emoji, joined_at: new Date().toISOString().split("T")[0] });
 
-  function doResetConfirm() {
-    if (!newPassword || newPassword !== confirmPassword) { setError("Passwords don't match"); return; }
-    if (newPassword.length < 6) { setError("Password must be at least 6 characters"); return; }
-    const tokenData = LS.get(`sd_reset_${invite.toUpperCase()}`);
-    if (!tokenData) { setError("Invalid or expired reset code"); return; }
-    if (Date.now() > tokenData.expires) { setError("Reset code has expired — please try again"); return; }
-    const users = LS.get(USERS_KEY, {});
-    users[tokenData.username].passwordHash = hash(newPassword);
-    LS.set(USERS_KEY, users);
-    LS.set(`sd_reset_${invite.toUpperCase()}`, null);
-    setSuccess("Password updated! You can now sign in.");
+    // Mark invite used
+    if (count > 0) {
+      await supabase.from("invites").update({ used: true }).eq("code", invite.toUpperCase());
+    }
+
+    setLoading(false);
+    setSuccess("Account created! Check your email to confirm, then sign in.");
     setMode("login");
-    setInvite(""); setNewPassword(""); setConfirmPassword("");
   }
 
-  const cardStyle = { background:"#FFFDF8", border:"2px solid #7DD8D0", borderRadius:4, padding:24, width:"100%", maxWidth:360 };
-  const btnPrimary = { width:"100%", fontFamily:"'Alfa Slab One',serif", fontSize:15, letterSpacing:2, padding:13, background:"#F07828", color:"#1A2744", border:"3px solid #1A2744", borderRadius:2, cursor:"pointer", textTransform:"uppercase", boxShadow:"3px 3px 0 #1A2744", marginTop:4 };
+  async function doResetRequest() {
+    if (!email.trim()) { setError("Please enter your email"); return; }
+    setLoading(true); setError("");
+    const { error: err } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin + "?reset=true"
+    });
+    setLoading(false);
+    if (err) { setError(err.message); return; }
+    setSuccess("Check your email for a password reset link!");
+  }
 
   return (
     <div style={{ minHeight:"100vh", background:"#1A2744", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, overflowY:"auto" }}>
@@ -225,46 +195,23 @@ ${token}
         <div style={{ fontFamily:"'Special Elite',serif", fontSize:9, color:"#7DD8D0", letterSpacing:2, textTransform:"uppercase", marginTop:4 }}>a good sandwich is like an old friend</div>
       </div>
 
-      {/* ── RESET REQUEST ── */}
       {mode === "reset" && (
         <div style={cardStyle}>
           <div style={{ fontFamily:"'Alfa Slab One',serif", fontSize:18, color:"#1A2744", marginBottom:4 }}>Reset Password</div>
-          <div style={{ fontFamily:"'Special Elite',serif", fontSize:10, color:"#3AADA4", letterSpacing:2, textTransform:"uppercase", marginBottom:16 }}>enter your email address</div>
+          <div style={{ fontFamily:"'Special Elite',serif", fontSize:10, color:"#3AADA4", letterSpacing:2, textTransform:"uppercase", marginBottom:16 }}>we'll email you a link</div>
           {error && <div style={{ background:"#FEF0E6", border:"1.5px solid #F07828", borderRadius:2, padding:"8px 10px", marginBottom:12, fontSize:12, color:"#C85E10", fontFamily:"'Courier Prime',monospace" }}>{error}</div>}
+          {success && <div style={{ background:"#E3F7F5", border:"1.5px solid #7DD8D0", borderRadius:2, padding:"8px 10px", marginBottom:12, fontSize:12, color:"#1A2744", fontFamily:"'Courier Prime',monospace" }}>{success}</div>}
           <div style={{ marginBottom:12 }}>
             <label style={labelStyle}>Email</label>
             <input value={email} onChange={e => setEmail(e.target.value)} placeholder="your@email.com" style={inputStyle} />
           </div>
-          <button onClick={doResetRequest} style={btnPrimary}>Send Reset Code</button>
+          <button onClick={doResetRequest} style={btnPrimary} disabled={loading}>
+            {loading ? "Sending…" : "Send Reset Link"}
+          </button>
           <button onClick={() => { setMode("login"); setError(""); setSuccess(""); }} style={{ width:"100%", marginTop:8, padding:"9px 0", fontFamily:"'Special Elite',serif", fontSize:12, background:"transparent", border:"none", color:"#3AADA4", cursor:"pointer", letterSpacing:1 }}>← Back to sign in</button>
         </div>
       )}
 
-      {/* ── RESET CONFIRM ── */}
-      {mode === "reset-confirm" && (
-        <div style={cardStyle}>
-          <div style={{ fontFamily:"'Alfa Slab One',serif", fontSize:18, color:"#1A2744", marginBottom:4 }}>Set New Password</div>
-          <div style={{ fontFamily:"'Special Elite',serif", fontSize:10, color:"#3AADA4", letterSpacing:2, textTransform:"uppercase", marginBottom:16 }}>enter your reset code</div>
-          {success && <div style={{ background:"#E3F7F5", border:"1.5px solid #7DD8D0", borderRadius:2, padding:"10px 12px", marginBottom:12, fontSize:11, color:"#1A2744", fontFamily:"'Courier Prime',monospace", whiteSpace:"pre-wrap", wordBreak:"break-all" }}>{success}</div>}
-          {error && <div style={{ background:"#FEF0E6", border:"1.5px solid #F07828", borderRadius:2, padding:"8px 10px", marginBottom:12, fontSize:12, color:"#C85E10", fontFamily:"'Courier Prime',monospace" }}>{error}</div>}
-          <div style={{ marginBottom:12 }}>
-            <label style={labelStyle}>Reset Code</label>
-            <input value={invite} onChange={e => setInvite(e.target.value)} placeholder="Paste your code here" style={{ ...inputStyle, textTransform:"uppercase", letterSpacing:2 }} />
-          </div>
-          <div style={{ marginBottom:12 }}>
-            <label style={labelStyle}>New Password</label>
-            <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="••••••••" style={inputStyle} />
-          </div>
-          <div style={{ marginBottom:12 }}>
-            <label style={labelStyle}>Confirm Password</label>
-            <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="••••••••" style={inputStyle} />
-          </div>
-          <button onClick={doResetConfirm} style={btnPrimary}>Update Password</button>
-          <button onClick={() => { setMode("login"); setError(""); setSuccess(""); }} style={{ width:"100%", marginTop:8, padding:"9px 0", fontFamily:"'Special Elite',serif", fontSize:12, background:"transparent", border:"none", color:"#3AADA4", cursor:"pointer", letterSpacing:1 }}>← Back to sign in</button>
-        </div>
-      )}
-
-      {/* ── LOGIN / SIGNUP ── */}
       {(mode === "login" || mode === "signup") && (
         <div style={cardStyle}>
           <div style={{ display:"flex", marginBottom:20, border:"2px solid #1A2744", borderRadius:2, overflow:"hidden" }}>
@@ -276,23 +223,23 @@ ${token}
           {error && <div style={{ background:"#FEF0E6", border:"1.5px solid #F07828", borderRadius:2, padding:"8px 10px", marginBottom:12, fontSize:12, color:"#C85E10", fontFamily:"'Courier Prime',monospace" }}>{error}</div>}
           {success && <div style={{ background:"#E3F7F5", border:"1.5px solid #7DD8D0", borderRadius:2, padding:"8px 10px", marginBottom:12, fontSize:12, color:"#1A2744", fontFamily:"'Courier Prime',monospace" }}>{success}</div>}
 
-          <div style={{ marginBottom:12 }}>
-            <label style={labelStyle}>Username</label>
-            <input value={username} onChange={e => setUsername(e.target.value)} placeholder="e.g. SandwichSally" style={inputStyle}
-              onKeyDown={e => e.key === "Enter" && (mode === "login" ? doLogin() : doSignup())} />
-          </div>
-
           {mode === "signup" && (
             <div style={{ marginBottom:12 }}>
-              <label style={labelStyle}>Email</label>
-              <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="your@email.com" style={inputStyle} />
+              <label style={labelStyle}>Username</label>
+              <input value={username} onChange={e => setUsername(e.target.value)} placeholder="e.g. SandwichSally" style={inputStyle} />
             </div>
           )}
 
-          <div style={{ marginBottom:mode === "login" ? 6 : 12 }}>
+          <div style={{ marginBottom:12 }}>
+            <label style={labelStyle}>Email</label>
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="your@email.com" style={inputStyle}
+              onKeyDown={e => e.key==="Enter" && mode==="login" && doLogin()} />
+          </div>
+
+          <div style={{ marginBottom: mode==="login" ? 6 : 12 }}>
             <label style={labelStyle}>Password</label>
             <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" style={inputStyle}
-              onKeyDown={e => e.key === "Enter" && (mode === "login" ? doLogin() : doSignup())} />
+              onKeyDown={e => e.key==="Enter" && mode==="login" && doLogin()} />
           </div>
 
           {mode === "login" && (
@@ -301,19 +248,13 @@ ${token}
             </div>
           )}
 
-          {mode === "signup" && <>
-            {Object.keys(LS.get(USERS_KEY, {})).length > 0 && (
-              <div style={{ marginBottom:12 }}>
-                <label style={labelStyle}>Invite Code</label>
-                <input value={invite} onChange={e => setInvite(e.target.value)} placeholder="e.g. SANDWICH"
-                  style={{ ...inputStyle, textTransform:"uppercase", letterSpacing:2 }} />
-              </div>
-            )}
-            {Object.keys(LS.get(USERS_KEY, {})).length === 0 && (
-              <div style={{ marginBottom:12, padding:"10px 12px", background:"#E3F7F5", borderRadius:2, border:"1px solid #7DD8D0", fontFamily:"'Special Elite',serif", fontSize:11, color:"#1A2744", letterSpacing:1 }}>
-                ★ You're the first member — no invite code needed!
-              </div>
-            )}
+          {mode === "signup" && (<>
+            <div style={{ marginBottom:12 }}>
+              <label style={labelStyle}>Invite Code</label>
+              <input value={invite} onChange={e => setInvite(e.target.value)} placeholder="e.g. SANDWICH"
+                style={{ ...inputStyle, textTransform:"uppercase", letterSpacing:2 }} />
+              <div style={{ fontSize:10, color:"#3AADA4", fontStyle:"italic", marginTop:3, fontFamily:"'Special Elite',serif" }}>Not needed if you're the first member</div>
+            </div>
             <div style={{ marginBottom:16 }}>
               <label style={labelStyle}>Pick your emoji</label>
               <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
@@ -322,10 +263,10 @@ ${token}
                 ))}
               </div>
             </div>
-          </>}
+          </>)}
 
-          <button onClick={mode === "login" ? doLogin : doSignup} style={btnPrimary}>
-            {mode === "login" ? "Sign In" : "Create Account"}
+          <button onClick={mode==="login" ? doLogin : doSignup} style={btnPrimary} disabled={loading}>
+            {loading ? "Please wait…" : mode==="login" ? "Sign In" : "Create Account"}
           </button>
         </div>
       )}
@@ -370,8 +311,7 @@ const styles = `
   .photo-dot { width:6px; height:6px; border-radius:50%; background:rgba(255,255,255,0.5); border:none; cursor:pointer; padding:0; transition:background 0.15s; }
   .photo-dot.active { background:white; }
   .photo-nav { position:absolute; top:50%; transform:translateY(-50%); background:rgba(26,39,68,0.5); border:none; color:white; font-size:16px; width:30px; height:30px; border-radius:50%; cursor:pointer; display:flex; align-items:center; justify-content:center; }
-  .photo-nav.prev { left:8px; }
-  .photo-nav.next { right:8px; }
+  .photo-nav.prev { left:8px; } .photo-nav.next { right:8px; }
   .card-body { padding:14px 16px 10px; }
   .card-title { font-family:'Alfa Slab One',serif; font-size:24px; color:var(--navy); margin-bottom:4px; line-height:1.05; letter-spacing:-0.5px; }
   .card-location { font-size:11px; color:var(--mint-dark); font-style:italic; margin-bottom:10px; cursor:pointer; }
@@ -472,6 +412,7 @@ const styles = `
   .follow-btn.following { background:var(--orange); color:var(--navy); border-color:var(--orange); }
   .empty-state { text-align:center; padding:50px 20px; color:#aaa; font-style:italic; font-size:14px; }
   .empty-state .big { font-size:48px; display:block; margin-bottom:10px; }
+  .loading-screen { min-height:100vh; background:#1A2744; display:flex; align-items:center; justify-content:center; font-family:'Alfa Slab One',serif; font-size:22px; color:#F07828; letter-spacing:1px; }
   .leaflet-popup-content-wrapper { border:2px solid #1A2744 !important; border-radius:3px !important; box-shadow:3px 3px 0 #7DD8D0 !important; }
   .leaflet-popup-tip { background:#1A2744 !important; }
   @media(max-width:480px) { .bottom-nav,.modal{width:100%} .fab{right:14px} }
@@ -479,16 +420,19 @@ const styles = `
 
 // ── Main App ──────────────────────────────────────────────────────────────────
 export default function SandwichDiary() {
-  const [currentUser, setCurrentUser] = useState(null);
+  const [profile, setProfile] = useState(null);   // { id, username, emoji, email, joined_at }
+  const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("feed");
   const [entries, setEntries] = useState([]);
   const [following, setFollowing] = useState([]);
+  const [allUsers, setAllUsers] = useState([]);
+  const [inviteCodes, setInviteCodes] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [commentInputs, setCommentInputs] = useState({});
   const [gpsStatus, setGpsStatus] = useState("");
-  const [inviteCodes, setInviteCodes] = useState([]);
   const [copied, setCopied] = useState(null);
   const [peopleSearch, setPeopleSearch] = useState("");
+  const [saving, setSaving] = useState(false);
   const fileRef = useRef();
 
   const [form, setForm] = useState({
@@ -497,60 +441,110 @@ export default function SandwichDiary() {
     wouldOrderAgain:true, notes:"", ingredients:[], photos:[], newIngredient:"",
   });
 
-  // On mount: seed demo data, restore session
+  // ── On mount: check session ──
   useEffect(() => {
-    seedIfEmpty();
-    const saved = LS.get(SESSION_KEY);
-    if (saved) handleLogin(saved);
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) loadProfile(session.user.id);
+      else setLoading(false);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
+      if (session) loadProfile(session.user.id);
+      else { setProfile(null); setLoading(false); }
+    });
+    return () => subscription.unsubscribe();
   }, []);
 
-  function handleLogin(username) {
-    setCurrentUser(username);
-    // Load following list for this user
-    const f = LS.get(`sd_following_${username}`, []);
-    setFollowing(f);
-    // Load entries
-    setEntries(LS.get(ENTRIES_KEY, []));
-    setInviteCodes(LS.get(INVITES_KEY, []));
+  async function loadProfile(userId) {
+    const { data } = await supabase.from("profiles").select("*").eq("id", userId).single();
+    if (data) {
+      setProfile(data);
+      await Promise.all([loadEntries(), loadFollowing(data.username), loadAllUsers(data.username), loadInvites(data.username)]);
+    }
+    setLoading(false);
   }
 
-  function handleSignout() {
-    LS.set(SESSION_KEY, null);
-    setCurrentUser(null);
-    setEntries([]);
-    setFollowing([]);
-    setTab("feed");
+  async function loadEntries() {
+    const { data } = await supabase.from("entries").select(`*, likes(username), comments(id,username,text,created_at)`).order("created_at", { ascending:false });
+    if (data) setEntries(data.map(normalizeEntry));
   }
 
-  // Persist entries to localStorage whenever they change
-  useEffect(() => {
-    if (currentUser) LS.set(ENTRIES_KEY, entries);
-  }, [entries]);
-
-  // Persist following
-  useEffect(() => {
-    if (currentUser) LS.set(`sd_following_${currentUser}`, following);
-  }, [following]);
-
-  function toggleFollow(username) {
-    setFollowing(f => f.includes(username) ? f.filter(u => u !== username) : [...f, username]);
+  async function loadFollowing(username) {
+    const { data } = await supabase.from("follows").select("following").eq("follower", username);
+    if (data) setFollowing(data.map(r => r.following));
   }
 
-  function toggleLike(id) {
-    setEntries(prev => prev.map(e => {
-      if (e.id !== id) return e;
-      const liked = (e.likes || []).includes(currentUser);
-      return { ...e, likes: liked ? e.likes.filter(u => u !== currentUser) : [...(e.likes||[]), currentUser] };
+  async function loadAllUsers(myUsername) {
+    const { data } = await supabase.from("profiles").select("username,emoji,joined_at").neq("username", myUsername);
+    if (data) setAllUsers(data);
+  }
+
+  async function loadInvites(username) {
+    const { data } = await supabase.from("invites").select("code").eq("created_by", username).eq("used", false);
+    if (data) setInviteCodes(data.map(r => r.code));
+  }
+
+  // Normalize DB row → app shape
+  function normalizeEntry(e) {
+    return {
+      id: e.id,
+      user: e.user_id,
+      sandwichName: e.sandwich_name,
+      location: e.location,
+      coords: e.coords,
+      ingredients: e.ingredients || [],
+      breadType: e.bread_type,
+      homemade: e.homemade,
+      price: e.price,
+      rating: e.rating,
+      sentiment: e.sentiment,
+      wouldOrderAgain: e.would_order_again,
+      notes: e.notes,
+      photos: e.photos || [],
+      date: e.date,
+      likes: (e.likes || []).map(l => l.username),
+      comments: (e.comments || []).map(c => ({ user: c.username, text: c.text, date: c.created_at?.split("T")[0] })),
+    };
+  }
+
+  async function handleSignout() {
+    await supabase.auth.signOut();
+    setProfile(null); setEntries([]); setFollowing([]); setAllUsers([]); setTab("feed");
+  }
+
+  async function toggleFollow(username) {
+    const isFollowing = following.includes(username);
+    if (isFollowing) {
+      await supabase.from("follows").delete().eq("follower", profile.username).eq("following", username);
+      setFollowing(f => f.filter(u => u !== username));
+    } else {
+      await supabase.from("follows").insert({ follower: profile.username, following: username });
+      setFollowing(f => [...f, username]);
+    }
+  }
+
+  async function toggleLike(entryId) {
+    const entry = entries.find(e => e.id === entryId);
+    const liked = entry.likes.includes(profile.username);
+    if (liked) {
+      await supabase.from("likes").delete().eq("entry_id", entryId).eq("username", profile.username);
+    } else {
+      await supabase.from("likes").insert({ entry_id: entryId, username: profile.username });
+    }
+    setEntries(prev => prev.map(e => e.id !== entryId ? e : {
+      ...e, likes: liked ? e.likes.filter(u => u !== profile.username) : [...e.likes, profile.username]
     }));
   }
 
-  function submitComment(id) {
-    const text = commentInputs[id]?.trim();
+  async function submitComment(entryId) {
+    const text = commentInputs[entryId]?.trim();
     if (!text) return;
-    setEntries(prev => prev.map(e =>
-      e.id === id ? { ...e, comments: [...(e.comments||[]), { user: currentUser, text, date: new Date().toISOString().split("T")[0] }] } : e
-    ));
-    setCommentInputs(prev => ({ ...prev, [id]:"" }));
+    const { data } = await supabase.from("comments").insert({ entry_id: entryId, username: profile.username, text }).select().single();
+    if (data) {
+      setEntries(prev => prev.map(e => e.id !== entryId ? e : {
+        ...e, comments: [...e.comments, { user: data.username, text: data.text, date: data.created_at?.split("T")[0] }]
+      }));
+      setCommentInputs(prev => ({ ...prev, [entryId]:"" }));
+    }
   }
 
   function addIngredient() {
@@ -563,14 +557,11 @@ export default function SandwichDiary() {
   }
 
   function handlePhoto(e) {
-    const files = Array.from(e.target.files || []);
-    files.forEach(file => {
+    Array.from(e.target.files || []).forEach(file => {
       setForm(f => {
         if (f.photos.length >= 5) return f;
         const reader = new FileReader();
-        reader.onload = ev => setForm(f2 => ({
-          ...f2, photos: f2.photos.length < 5 ? [...f2.photos, ev.target.result] : f2.photos
-        }));
+        reader.onload = ev => setForm(f2 => ({ ...f2, photos: f2.photos.length < 5 ? [...f2.photos, ev.target.result] : f2.photos }));
         reader.readAsDataURL(file);
         return f;
       });
@@ -579,53 +570,61 @@ export default function SandwichDiary() {
   }
 
   function removePhoto(idx) {
-    setForm(f => ({ ...f, photos: f.photos.filter((_,i) => i !== idx) }));
+    setForm(f => ({ ...f, photos:f.photos.filter((_,i) => i !== idx) }));
   }
 
   function grabGPS() {
     if (!navigator.geolocation) { setGpsStatus("GPS not available"); return; }
     setGpsStatus("📡 Locating…");
-    navigator.geolocation.getCurrentPosition(
-      async pos => {
-        const { latitude:lat, longitude:lon } = pos.coords;
-        setForm(f => ({ ...f, coords:[lat,lon] }));
-        try {
-          const res = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`);
-          const data = await res.json();
-          const addr = data.display_name?.split(",").slice(0,3).join(", ") || `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
-          setForm(f => ({ ...f, location:addr, coords:[lat,lon] }));
-          setGpsStatus("✓ Location set");
-        } catch {
-          setForm(f => ({ ...f, location:`${lat.toFixed(4)}, ${lon.toFixed(4)}`, coords:[lat,lon] }));
-          setGpsStatus("✓ Coords saved");
-        }
-        setTimeout(() => setGpsStatus(""), 3000);
-      },
-      () => { setGpsStatus("⚠ Permission denied"); setTimeout(() => setGpsStatus(""), 3000); }
-    );
+    navigator.geolocation.getCurrentPosition(async pos => {
+      const { latitude:lat, longitude:lon } = pos.coords;
+      setForm(f => ({ ...f, coords:[lat,lon] }));
+      try {
+        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`);
+        const data = await res.json();
+        const addr = data.display_name?.split(",").slice(0,3).join(", ") || `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+        setForm(f => ({ ...f, location:addr, coords:[lat,lon] }));
+        setGpsStatus("✓ Location set");
+      } catch {
+        setForm(f => ({ ...f, location:`${lat.toFixed(4)}, ${lon.toFixed(4)}`, coords:[lat,lon] }));
+        setGpsStatus("✓ Coords saved");
+      }
+      setTimeout(() => setGpsStatus(""), 3000);
+    }, () => { setGpsStatus("⚠ Permission denied"); setTimeout(() => setGpsStatus(""), 3000); });
   }
 
-  function submitEntry() {
-    if (!form.sandwichName.trim()) return;
-    const entry = {
-      id: Date.now(), user: currentUser,
-      sandwichName:form.sandwichName, location:form.location, coords:form.coords,
-      ingredients:form.ingredients, breadType:form.breadType, homemade:form.homemade,
-      price:form.price, rating:form.rating, sentiment:form.sentiment,
-      wouldOrderAgain:form.wouldOrderAgain, notes:form.notes,
-      date:new Date().toISOString().split("T")[0], photos:form.photos, likes:[], comments:[],
-    };
-    setEntries(prev => [entry, ...prev]);
+  async function submitEntry() {
+    if (!form.sandwichName.trim() || saving) return;
+    setSaving(true);
+    const { data, error } = await supabase.from("entries").insert({
+      user_id: profile.username,
+      sandwich_name: form.sandwichName,
+      location: form.location,
+      coords: form.coords,
+      ingredients: form.ingredients,
+      bread_type: form.breadType,
+      homemade: form.homemade,
+      price: form.price,
+      rating: form.rating,
+      sentiment: form.sentiment,
+      would_order_again: form.wouldOrderAgain,
+      notes: form.notes,
+      photos: form.photos,
+      date: new Date().toISOString().split("T")[0],
+    }).select(`*, likes(username), comments(id,username,text,created_at)`).single();
+
+    setSaving(false);
+    if (error) { alert("Error saving: " + error.message); return; }
+    setEntries(prev => [normalizeEntry(data), ...prev]);
     setForm({ sandwichName:"", location:"", coords:null, breadType:"Sourdough", homemade:false, price:"", rating:5, sentiment:"😋", wouldOrderAgain:true, notes:"", ingredients:[], photos:[], newIngredient:"" });
     setShowModal(false);
     setTab("feed");
   }
 
-  function generateInvite() {
+  async function generateInvite() {
     const code = makeCode();
-    const codes = [...inviteCodes, code];
-    setInviteCodes(codes);
-    LS.set(INVITES_KEY, codes);
+    await supabase.from("invites").insert({ code, created_by: profile.username });
+    setInviteCodes(c => [...c, code]);
   }
 
   function copyCode(code) {
@@ -634,14 +633,12 @@ export default function SandwichDiary() {
     setTimeout(() => setCopied(null), 2000);
   }
 
-  // Derived data
-  const users = LS.get(USERS_KEY, {});
-  const myEntries = entries.filter(e => e.user === currentUser);
-  const feedEntries = entries.filter(e => e.user === currentUser || following.includes(e.user));
-  const otherUsers = Object.values(users).filter(u => u.username !== currentUser);
+  // ── Derived ──
+  const myEntries = entries.filter(e => e.user === profile?.username);
+  const feedEntries = entries.filter(e => e.user === profile?.username || following.includes(e.user));
 
   function renderCard(entry) {
-    const liked = (entry.likes||[]).includes(currentUser);
+    const liked = entry.likes.includes(profile.username);
     return (
       <div key={entry.id} className="card">
         <div className="card-header">
@@ -666,14 +663,14 @@ export default function SandwichDiary() {
           {entry.notes && <div className="card-notes">{entry.notes}</div>}
           <div className="card-actions">
             <button className={`action-btn ${liked?"liked":""}`} onClick={() => toggleLike(entry.id)}>
-              {liked?"♥":"♡"} {(entry.likes||[]).length}
+              {liked?"♥":"♡"} {entry.likes.length}
             </button>
-            <button className="action-btn">💬 {(entry.comments||[]).length}</button>
+            <button className="action-btn">💬 {entry.comments.length}</button>
             {entry.coords && <button className="action-btn" onClick={() => setTab("map")}>🗺</button>}
           </div>
         </div>
         <div className="comments-section">
-          {(entry.comments||[]).map((c,i) => (
+          {entry.comments.map((c,i) => (
             <div key={i} className="comment"><span className="comment-user">{c.user}</span>{c.text}</div>
           ))}
           <div className="comment-input-row">
@@ -688,9 +685,8 @@ export default function SandwichDiary() {
     );
   }
 
-  if (!currentUser) return <AuthScreen onLogin={handleLogin} />;
-
-  const me = users[currentUser] || {};
+  if (loading) return <div className="loading-screen">Stacked ★</div>;
+  if (!profile) return <AuthScreen onLogin={p => { setProfile(p); loadProfile(p.id); }} />;
 
   return (
     <>
@@ -703,9 +699,9 @@ export default function SandwichDiary() {
               <div className="logo-sub">a good sandwich is like an old friend</div>
             </div>
             <div className="header-user">
-              <span className="header-avatar">{me.emoji||"🥪"}</span>
+              <span className="header-avatar">{profile.emoji||"🥪"}</span>
               <div>
-                <div className="header-username">{currentUser}</div>
+                <div className="header-username">{profile.username}</div>
                 <button className="signout-btn" onClick={handleSignout}>sign out</button>
               </div>
             </div>
@@ -721,32 +717,21 @@ export default function SandwichDiary() {
           </div>
         )}
 
-
-
-        {tab === "map" && <SandwichMap entries={entries} currentUser={currentUser} />}
+        {tab === "map" && <SandwichMap entries={entries} currentUser={profile.username} />}
 
         {tab === "people" && (
           <>
             <div className="feed"><div className="section-label">Sandwich Artists</div></div>
             <div style={{ padding:"0 14px 12px" }}>
-              <input
-                className="form-input"
-                placeholder="🔍 Search by username…"
-                value={peopleSearch}
-                onChange={e => setPeopleSearch(e.target.value)}
-                style={{ width:"100%" }}
-              />
+              <input className="form-input" placeholder="🔍 Search by username…" value={peopleSearch}
+                onChange={e => setPeopleSearch(e.target.value)} style={{ width:"100%" }} />
             </div>
             <div className="people-list">
-              {otherUsers.length === 0
+              {allUsers.length === 0
                 ? <div className="empty-state"><span className="big">🥪</span>No other sandwich artists yet — invite your friends!</div>
                 : (() => {
-                    const filtered = otherUsers.filter(u =>
-                      u.username.toLowerCase().includes(peopleSearch.toLowerCase())
-                    );
-                    if (filtered.length === 0) return (
-                      <div className="empty-state"><span className="big">🔍</span>No one found matching "{peopleSearch}"</div>
-                    );
+                    const filtered = allUsers.filter(u => u.username.toLowerCase().includes(peopleSearch.toLowerCase()));
+                    if (filtered.length === 0) return <div className="empty-state"><span className="big">🔍</span>No one matching "{peopleSearch}"</div>;
                     return filtered.map(u => (
                       <div key={u.username} className="person-row">
                         <div className="person-avatar-lg">{u.emoji}</div>
@@ -769,15 +754,15 @@ export default function SandwichDiary() {
           <>
             <div className="profile-card">
               <div className="profile-header">
-                <div className="profile-avatar">{me.emoji||"🥪"}</div>
-                <div className="profile-name">{currentUser}</div>
-                <div className="profile-tagline">sandwich enthusiast · since {me.joinedAt||"2026"}</div>
-                {me.email && <div style={{ fontFamily:"'Courier Prime',monospace", fontSize:11, color:"rgba(125,216,208,0.6)", marginTop:4 }}>{me.email}</div>}
+                <div className="profile-avatar">{profile.emoji||"🥪"}</div>
+                <div className="profile-name">{profile.username}</div>
+                <div className="profile-tagline">sandwich enthusiast · since {profile.joined_at||"2026"}</div>
+                {profile.email && <div style={{ fontFamily:"'Courier Prime',monospace", fontSize:11, color:"rgba(125,216,208,0.6)", marginTop:4 }}>{profile.email}</div>}
               </div>
               <div className="profile-stats">
                 <div className="stat"><span className="stat-num">{myEntries.length}</span><span className="stat-label">Logged</span></div>
                 <div className="stat"><span className="stat-num">{following.length}</span><span className="stat-label">Following</span></div>
-                <div className="stat"><span className="stat-num">{myEntries.reduce((a,e) => a+(e.likes||[]).length,0)}</span><span className="stat-label">Likes</span></div>
+                <div className="stat"><span className="stat-num">{myEntries.reduce((a,e) => a+e.likes.length,0)}</span><span className="stat-label">Likes</span></div>
                 <div className="stat">
                   <span className="stat-num">{myEntries.length?(myEntries.reduce((a,e)=>a+e.rating,0)/myEntries.length).toFixed(1):"—"}</span>
                   <span className="stat-label">Avg ★</span>
@@ -785,15 +770,14 @@ export default function SandwichDiary() {
               </div>
             </div>
 
-            {/* Invite codes */}
             <div className="invite-box">
               <div className="invite-title">Invite Friends</div>
               {inviteCodes.length === 0
-                ? <div style={{ fontSize:12, color:"#aaa", fontStyle:"italic", marginBottom:8 }}>No invite codes left — generate one below</div>
+                ? <div style={{ fontSize:12, color:"#aaa", fontStyle:"italic", marginBottom:8 }}>No invite codes — generate one below</div>
                 : inviteCodes.map(code => (
                   <div key={code} style={{ marginBottom:6 }}>
                     <div className="invite-code" onClick={() => copyCode(code)}>{code}</div>
-                    <div className="invite-hint">{copied===code ? "✓ Copied!" : "Tap to copy — share with a friend"}</div>
+                    <div className="invite-hint">{copied===code?"✓ Copied!":"Tap to copy — share with a friend"}</div>
                   </div>
                 ))
               }
@@ -806,7 +790,6 @@ export default function SandwichDiary() {
                 ? <div className="empty-state"><span className="big">⭐</span>Log some sandwiches!</div>
                 : [...myEntries].sort((a,b) => b.rating-a.rating).slice(0,3).map(renderCard)}
             </div>
-
             <div className="feed" style={{ paddingTop:0 }}>
               <div className="section-label">All My Sandwiches ({myEntries.length})</div>
               {myEntries.length === 0
@@ -860,9 +843,9 @@ export default function SandwichDiary() {
                     ))}
                   </div>
                 )}
-                <div className={`photo-upload ${form.photos.length >= 5 ? "full" : ""}`}
+                <div className={`photo-upload ${form.photos.length>=5?"full":""}`}
                   onClick={() => form.photos.length < 5 && fileRef.current.click()}>
-                  📷 {form.photos.length >= 5 ? "5 photos max" : `Add photo${form.photos.length > 0 ? "s" : ""}`}
+                  📷 {form.photos.length>=5?"5 photos max":`Add photo${form.photos.length>0?"s":""}`}
                 </div>
               </div>
               <div className="form-group">
@@ -921,7 +904,9 @@ export default function SandwichDiary() {
                 <textarea className="form-textarea" placeholder="What made it special? What would you change?"
                   value={form.notes} onChange={e => setForm(f => ({ ...f, notes:e.target.value }))} />
               </div>
-              <button className="submit-btn" onClick={submitEntry}>Log This Sandwich</button>
+              <button className="submit-btn" onClick={submitEntry} disabled={saving}>
+                {saving ? "Saving…" : "Log This Sandwich"}
+              </button>
               <button className="cancel-btn" onClick={() => setShowModal(false)}>Cancel</button>
             </div>
           </div>
