@@ -140,12 +140,19 @@ function SandwichMap({ entries, currentUser }) {
 
 // ── Auth Screen ───────────────────────────────────────────────────────────────
 function AuthScreen({ onLogin }) {
-  const [mode, setMode] = useState("login"); // login | signup
+  const [mode, setMode] = useState("login"); // login | signup | reset | reset-confirm
   const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [invite, setInvite] = useState("");
   const [emoji, setEmoji] = useState("🥪");
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const inputStyle = { width:"100%", fontFamily:"'Courier Prime',monospace", fontSize:13, padding:"8px 10px", border:"2px solid #7DD8D0", borderRadius:2, background:"white", color:"#1A2744" };
+  const labelStyle = { fontFamily:"'Special Elite',serif", fontSize:10, letterSpacing:2, textTransform:"uppercase", color:"#1A2744", display:"block", marginBottom:4 };
 
   function doLogin() {
     const users = LS.get(USERS_KEY, {});
@@ -157,8 +164,10 @@ function AuthScreen({ onLogin }) {
   }
 
   function doSignup() {
-    if (!username.trim() || !password.trim()) { setError("Username and password required"); return; }
+    if (!username.trim() || !password.trim() || !email.trim()) { setError("All fields required"); return; }
     if (username.length < 3) { setError("Username must be at least 3 characters"); return; }
+    if (!email.includes("@")) { setError("Please enter a valid email"); return; }
+    if (password.length < 6) { setError("Password must be at least 6 characters"); return; }
     const users = LS.get(USERS_KEY, {});
     const isFirstUser = Object.keys(users).length === 0;
     if (!isFirstUser) {
@@ -167,71 +176,159 @@ function AuthScreen({ onLogin }) {
       LS.set(INVITES_KEY, codes.filter(c => c !== invite.toUpperCase()));
     }
     if (users[username]) { setError("Username already taken"); return; }
-    users[username] = { username, emoji, passwordHash: hash(password), joinedAt: new Date().toISOString().split("T")[0] };
+    const emailTaken = Object.values(users).some(u => u.email === email.toLowerCase());
+    if (emailTaken) { setError("An account with that email already exists"); return; }
+    users[username] = { username, email: email.toLowerCase(), emoji, passwordHash: hash(password), joinedAt: new Date().toISOString().split("T")[0] };
     LS.set(USERS_KEY, users);
     LS.set(SESSION_KEY, username);
     onLogin(username);
   }
 
+  function doResetRequest() {
+    const users = LS.get(USERS_KEY, {});
+    const user = Object.values(users).find(u => u.email === email.toLowerCase());
+    if (!user) { setError("No account found with that email"); return; }
+    // Store a reset token against the username
+    const token = makeCode() + makeCode();
+    LS.set(`sd_reset_${token}`, { username: user.username, expires: Date.now() + 1000 * 60 * 30 });
+    setSuccess(`Since this app stores data locally, paste this reset code on the next screen:
+
+${token}
+
+(In production with Supabase this would arrive by email)`);
+    setMode("reset-confirm");
+    setEmail("");
+  }
+
+  function doResetConfirm() {
+    if (!newPassword || newPassword !== confirmPassword) { setError("Passwords don't match"); return; }
+    if (newPassword.length < 6) { setError("Password must be at least 6 characters"); return; }
+    const tokenData = LS.get(`sd_reset_${invite.toUpperCase()}`);
+    if (!tokenData) { setError("Invalid or expired reset code"); return; }
+    if (Date.now() > tokenData.expires) { setError("Reset code has expired — please try again"); return; }
+    const users = LS.get(USERS_KEY, {});
+    users[tokenData.username].passwordHash = hash(newPassword);
+    LS.set(USERS_KEY, users);
+    LS.set(`sd_reset_${invite.toUpperCase()}`, null);
+    setSuccess("Password updated! You can now sign in.");
+    setMode("login");
+    setInvite(""); setNewPassword(""); setConfirmPassword("");
+  }
+
+  const cardStyle = { background:"#FFFDF8", border:"2px solid #7DD8D0", borderRadius:4, padding:24, width:"100%", maxWidth:360 };
+  const btnPrimary = { width:"100%", fontFamily:"'Alfa Slab One',serif", fontSize:15, letterSpacing:2, padding:13, background:"#F07828", color:"#1A2744", border:"3px solid #1A2744", borderRadius:2, cursor:"pointer", textTransform:"uppercase", boxShadow:"3px 3px 0 #1A2744", marginTop:4 };
+
   return (
-    <div style={{ minHeight:"100vh", background:"#1A2744", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24 }}>
+    <div style={{ minHeight:"100vh", background:"#1A2744", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, overflowY:"auto" }}>
       <div style={{ marginBottom:24, textAlign:"center" }}>
-        <div style={{ fontFamily:"'Alfa Slab One',serif", fontSize:32, color:"#F07828", textShadow:"2px 2px 0 rgba(0,0,0,0.4)", letterSpacing:1 }}>Sandwich Diary</div>
+        <div style={{ fontFamily:"'Alfa Slab One',serif", fontSize:32, color:"#F07828", textShadow:"2px 2px 0 rgba(0,0,0,0.4)", letterSpacing:1 }}>Stacked</div>
         <div style={{ fontFamily:"'Special Elite',serif", fontSize:9, color:"#7DD8D0", letterSpacing:2, textTransform:"uppercase", marginTop:4 }}>a good sandwich is like an old friend</div>
       </div>
 
-      <div style={{ background:"#FFFDF8", border:"2px solid #7DD8D0", borderRadius:4, padding:24, width:"100%", maxWidth:360 }}>
-        <div style={{ display:"flex", marginBottom:20, border:"2px solid #1A2744", borderRadius:2, overflow:"hidden" }}>
-          {[["login","Sign In"],["signup","Join"]].map(([m,l]) => (
-            <button key={m} onClick={() => { setMode(m); setError(""); }} style={{ flex:1, padding:"9px 0", fontFamily:"'Alfa Slab One',serif", fontSize:13, border:"none", background:mode===m?"#1A2744":"transparent", color:mode===m?"#F07828":"#1A2744", cursor:"pointer", letterSpacing:1 }}>{l}</button>
-          ))}
-        </div>
-
-        {error && <div style={{ background:"#FEF0E6", border:"1.5px solid #F07828", borderRadius:2, padding:"8px 10px", marginBottom:12, fontSize:12, color:"#C85E10", fontFamily:"'Courier Prime',monospace" }}>{error}</div>}
-
-        <div style={{ marginBottom:12 }}>
-          <label style={{ fontFamily:"'Special Elite',serif", fontSize:10, letterSpacing:2, textTransform:"uppercase", color:"#1A2744", display:"block", marginBottom:4 }}>Username</label>
-          <input value={username} onChange={e => setUsername(e.target.value)} placeholder="e.g. SandwichSally"
-            style={{ width:"100%", fontFamily:"'Courier Prime',monospace", fontSize:13, padding:"8px 10px", border:"2px solid #7DD8D0", borderRadius:2, background:"white", color:"#1A2744" }}
-            onKeyDown={e => e.key === "Enter" && (mode === "login" ? doLogin() : doSignup())} />
-        </div>
-
-        <div style={{ marginBottom:12 }}>
-          <label style={{ fontFamily:"'Special Elite',serif", fontSize:10, letterSpacing:2, textTransform:"uppercase", color:"#1A2744", display:"block", marginBottom:4 }}>Password</label>
-          <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••"
-            style={{ width:"100%", fontFamily:"'Courier Prime',monospace", fontSize:13, padding:"8px 10px", border:"2px solid #7DD8D0", borderRadius:2, background:"white", color:"#1A2744" }}
-            onKeyDown={e => e.key === "Enter" && (mode === "login" ? doLogin() : doSignup())} />
-        </div>
-
-        {mode === "signup" && <>
-          {Object.keys(LS.get(USERS_KEY, {})).length > 0 && (
-            <div style={{ marginBottom:12 }}>
-              <label style={{ fontFamily:"'Special Elite',serif", fontSize:10, letterSpacing:2, textTransform:"uppercase", color:"#1A2744", display:"block", marginBottom:4 }}>Invite Code</label>
-              <input value={invite} onChange={e => setInvite(e.target.value)} placeholder="e.g. SANDWICH"
-                style={{ width:"100%", fontFamily:"'Courier Prime',monospace", fontSize:13, padding:"8px 10px", border:"2px solid #7DD8D0", borderRadius:2, background:"white", color:"#1A2744", textTransform:"uppercase", letterSpacing:2 }} />
-            </div>
-          )}
-          {Object.keys(LS.get(USERS_KEY, {})).length === 0 && (
-            <div style={{ marginBottom:12, padding:"10px 12px", background:"#E3F7F5", borderRadius:2, border:"1px solid #7DD8D0", fontFamily:"'Special Elite',serif", fontSize:11, color:"#1A2744", letterSpacing:1 }}>
-              ★ You're the first member — no invite code needed!
-            </div>
-          )}
-          <div style={{ marginBottom:16 }}>
-            <label style={{ fontFamily:"'Special Elite',serif", fontSize:10, letterSpacing:2, textTransform:"uppercase", color:"#1A2744", display:"block", marginBottom:6 }}>Pick your emoji</label>
-            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-              {AVATARS.map(a => (
-                <span key={a} onClick={() => setEmoji(a)} style={{ fontSize:22, cursor:"pointer", padding:4, border:`2px solid ${emoji===a?"#F07828":"transparent"}`, borderRadius:4, background:emoji===a?"#FEF0E6":"transparent" }}>{a}</span>
-              ))}
-            </div>
+      {/* ── RESET REQUEST ── */}
+      {mode === "reset" && (
+        <div style={cardStyle}>
+          <div style={{ fontFamily:"'Alfa Slab One',serif", fontSize:18, color:"#1A2744", marginBottom:4 }}>Reset Password</div>
+          <div style={{ fontFamily:"'Special Elite',serif", fontSize:10, color:"#3AADA4", letterSpacing:2, textTransform:"uppercase", marginBottom:16 }}>enter your email address</div>
+          {error && <div style={{ background:"#FEF0E6", border:"1.5px solid #F07828", borderRadius:2, padding:"8px 10px", marginBottom:12, fontSize:12, color:"#C85E10", fontFamily:"'Courier Prime',monospace" }}>{error}</div>}
+          <div style={{ marginBottom:12 }}>
+            <label style={labelStyle}>Email</label>
+            <input value={email} onChange={e => setEmail(e.target.value)} placeholder="your@email.com" style={inputStyle} />
           </div>
-        </>}
+          <button onClick={doResetRequest} style={btnPrimary}>Send Reset Code</button>
+          <button onClick={() => { setMode("login"); setError(""); setSuccess(""); }} style={{ width:"100%", marginTop:8, padding:"9px 0", fontFamily:"'Special Elite',serif", fontSize:12, background:"transparent", border:"none", color:"#3AADA4", cursor:"pointer", letterSpacing:1 }}>← Back to sign in</button>
+        </div>
+      )}
 
-        <button onClick={mode === "login" ? doLogin : doSignup} style={{ width:"100%", fontFamily:"'Alfa Slab One',serif", fontSize:15, letterSpacing:2, padding:13, background:"#F07828", color:"#1A2744", border:"3px solid #1A2744", borderRadius:2, cursor:"pointer", textTransform:"uppercase", boxShadow:"3px 3px 0 #1A2744" }}>
-          {mode === "login" ? "Sign In" : "Create Account"}
-        </button>
+      {/* ── RESET CONFIRM ── */}
+      {mode === "reset-confirm" && (
+        <div style={cardStyle}>
+          <div style={{ fontFamily:"'Alfa Slab One',serif", fontSize:18, color:"#1A2744", marginBottom:4 }}>Set New Password</div>
+          <div style={{ fontFamily:"'Special Elite',serif", fontSize:10, color:"#3AADA4", letterSpacing:2, textTransform:"uppercase", marginBottom:16 }}>enter your reset code</div>
+          {success && <div style={{ background:"#E3F7F5", border:"1.5px solid #7DD8D0", borderRadius:2, padding:"10px 12px", marginBottom:12, fontSize:11, color:"#1A2744", fontFamily:"'Courier Prime',monospace", whiteSpace:"pre-wrap", wordBreak:"break-all" }}>{success}</div>}
+          {error && <div style={{ background:"#FEF0E6", border:"1.5px solid #F07828", borderRadius:2, padding:"8px 10px", marginBottom:12, fontSize:12, color:"#C85E10", fontFamily:"'Courier Prime',monospace" }}>{error}</div>}
+          <div style={{ marginBottom:12 }}>
+            <label style={labelStyle}>Reset Code</label>
+            <input value={invite} onChange={e => setInvite(e.target.value)} placeholder="Paste your code here" style={{ ...inputStyle, textTransform:"uppercase", letterSpacing:2 }} />
+          </div>
+          <div style={{ marginBottom:12 }}>
+            <label style={labelStyle}>New Password</label>
+            <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="••••••••" style={inputStyle} />
+          </div>
+          <div style={{ marginBottom:12 }}>
+            <label style={labelStyle}>Confirm Password</label>
+            <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="••••••••" style={inputStyle} />
+          </div>
+          <button onClick={doResetConfirm} style={btnPrimary}>Update Password</button>
+          <button onClick={() => { setMode("login"); setError(""); setSuccess(""); }} style={{ width:"100%", marginTop:8, padding:"9px 0", fontFamily:"'Special Elite',serif", fontSize:12, background:"transparent", border:"none", color:"#3AADA4", cursor:"pointer", letterSpacing:1 }}>← Back to sign in</button>
+        </div>
+      )}
 
+      {/* ── LOGIN / SIGNUP ── */}
+      {(mode === "login" || mode === "signup") && (
+        <div style={cardStyle}>
+          <div style={{ display:"flex", marginBottom:20, border:"2px solid #1A2744", borderRadius:2, overflow:"hidden" }}>
+            {[["login","Sign In"],["signup","Join"]].map(([m,l]) => (
+              <button key={m} onClick={() => { setMode(m); setError(""); setSuccess(""); }} style={{ flex:1, padding:"9px 0", fontFamily:"'Alfa Slab One',serif", fontSize:13, border:"none", background:mode===m?"#1A2744":"transparent", color:mode===m?"#F07828":"#1A2744", cursor:"pointer", letterSpacing:1 }}>{l}</button>
+            ))}
+          </div>
 
-      </div>
+          {error && <div style={{ background:"#FEF0E6", border:"1.5px solid #F07828", borderRadius:2, padding:"8px 10px", marginBottom:12, fontSize:12, color:"#C85E10", fontFamily:"'Courier Prime',monospace" }}>{error}</div>}
+          {success && <div style={{ background:"#E3F7F5", border:"1.5px solid #7DD8D0", borderRadius:2, padding:"8px 10px", marginBottom:12, fontSize:12, color:"#1A2744", fontFamily:"'Courier Prime',monospace" }}>{success}</div>}
+
+          <div style={{ marginBottom:12 }}>
+            <label style={labelStyle}>Username</label>
+            <input value={username} onChange={e => setUsername(e.target.value)} placeholder="e.g. SandwichSally" style={inputStyle}
+              onKeyDown={e => e.key === "Enter" && (mode === "login" ? doLogin() : doSignup())} />
+          </div>
+
+          {mode === "signup" && (
+            <div style={{ marginBottom:12 }}>
+              <label style={labelStyle}>Email</label>
+              <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="your@email.com" style={inputStyle} />
+            </div>
+          )}
+
+          <div style={{ marginBottom:mode === "login" ? 6 : 12 }}>
+            <label style={labelStyle}>Password</label>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" style={inputStyle}
+              onKeyDown={e => e.key === "Enter" && (mode === "login" ? doLogin() : doSignup())} />
+          </div>
+
+          {mode === "login" && (
+            <div style={{ textAlign:"right", marginBottom:14 }}>
+              <button onClick={() => { setMode("reset"); setError(""); setSuccess(""); }} style={{ background:"none", border:"none", fontFamily:"'Special Elite',serif", fontSize:10, color:"#3AADA4", cursor:"pointer", letterSpacing:1, textDecoration:"underline" }}>Forgot password?</button>
+            </div>
+          )}
+
+          {mode === "signup" && <>
+            {Object.keys(LS.get(USERS_KEY, {})).length > 0 && (
+              <div style={{ marginBottom:12 }}>
+                <label style={labelStyle}>Invite Code</label>
+                <input value={invite} onChange={e => setInvite(e.target.value)} placeholder="e.g. SANDWICH"
+                  style={{ ...inputStyle, textTransform:"uppercase", letterSpacing:2 }} />
+              </div>
+            )}
+            {Object.keys(LS.get(USERS_KEY, {})).length === 0 && (
+              <div style={{ marginBottom:12, padding:"10px 12px", background:"#E3F7F5", borderRadius:2, border:"1px solid #7DD8D0", fontFamily:"'Special Elite',serif", fontSize:11, color:"#1A2744", letterSpacing:1 }}>
+                ★ You're the first member — no invite code needed!
+              </div>
+            )}
+            <div style={{ marginBottom:16 }}>
+              <label style={labelStyle}>Pick your emoji</label>
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                {AVATARS.map(a => (
+                  <span key={a} onClick={() => setEmoji(a)} style={{ fontSize:22, cursor:"pointer", padding:4, border:`2px solid ${emoji===a?"#F07828":"transparent"}`, borderRadius:4, background:emoji===a?"#FEF0E6":"transparent" }}>{a}</span>
+                ))}
+              </div>
+            </div>
+          </>}
+
+          <button onClick={mode === "login" ? doLogin : doSignup} style={btnPrimary}>
+            {mode === "login" ? "Sign In" : "Create Account"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -391,6 +488,7 @@ export default function SandwichDiary() {
   const [gpsStatus, setGpsStatus] = useState("");
   const [inviteCodes, setInviteCodes] = useState([]);
   const [copied, setCopied] = useState(null);
+  const [peopleSearch, setPeopleSearch] = useState("");
   const fileRef = useRef();
 
   const [form, setForm] = useState({
@@ -601,7 +699,7 @@ export default function SandwichDiary() {
         <div className="header">
           <div className="header-inner">
             <div>
-              <div className="logo">Sandwich Diary</div>
+              <div className="logo">Stacked</div>
               <div className="logo-sub">a good sandwich is like an old friend</div>
             </div>
             <div className="header-user">
@@ -623,35 +721,45 @@ export default function SandwichDiary() {
           </div>
         )}
 
-        {tab === "diary" && (
-          <div className="feed">
-            <div className="section-label">My Sandwiches ({myEntries.length})</div>
-            {myEntries.length === 0
-              ? <div className="empty-state"><span className="big">📖</span>No entries yet — log your first sandwich!</div>
-              : myEntries.map(renderCard)}
-          </div>
-        )}
+
 
         {tab === "map" && <SandwichMap entries={entries} currentUser={currentUser} />}
 
         {tab === "people" && (
           <>
-            <div className="feed"><div className="section-label">Community</div></div>
+            <div className="feed"><div className="section-label">Sandwich Artists</div></div>
+            <div style={{ padding:"0 14px 12px" }}>
+              <input
+                className="form-input"
+                placeholder="🔍 Search by username…"
+                value={peopleSearch}
+                onChange={e => setPeopleSearch(e.target.value)}
+                style={{ width:"100%" }}
+              />
+            </div>
             <div className="people-list">
               {otherUsers.length === 0
-                ? <div className="empty-state"><span className="big">👥</span>No other members yet — invite your friends!</div>
-                : otherUsers.map(u => (
-                  <div key={u.username} className="person-row">
-                    <div className="person-avatar-lg">{u.emoji}</div>
-                    <div className="person-info">
-                      <div className="person-name">{u.username}</div>
-                      <div className="person-count">{entries.filter(e => e.user === u.username).length} sandwiches logged</div>
-                    </div>
-                    <button className={`follow-btn ${following.includes(u.username)?"following":""}`} onClick={() => toggleFollow(u.username)}>
-                      {following.includes(u.username) ? "✓ Following" : "+ Follow"}
-                    </button>
-                  </div>
-                ))
+                ? <div className="empty-state"><span className="big">🥪</span>No other sandwich artists yet — invite your friends!</div>
+                : (() => {
+                    const filtered = otherUsers.filter(u =>
+                      u.username.toLowerCase().includes(peopleSearch.toLowerCase())
+                    );
+                    if (filtered.length === 0) return (
+                      <div className="empty-state"><span className="big">🔍</span>No one found matching "{peopleSearch}"</div>
+                    );
+                    return filtered.map(u => (
+                      <div key={u.username} className="person-row">
+                        <div className="person-avatar-lg">{u.emoji}</div>
+                        <div className="person-info">
+                          <div className="person-name">{u.username}</div>
+                          <div className="person-count">{entries.filter(e => e.user === u.username).length} sandwiches logged</div>
+                        </div>
+                        <button className={`follow-btn ${following.includes(u.username)?"following":""}`} onClick={() => toggleFollow(u.username)}>
+                          {following.includes(u.username) ? "✓ Following" : "+ Follow"}
+                        </button>
+                      </div>
+                    ));
+                  })()
               }
             </div>
           </>
@@ -664,6 +772,7 @@ export default function SandwichDiary() {
                 <div className="profile-avatar">{me.emoji||"🥪"}</div>
                 <div className="profile-name">{currentUser}</div>
                 <div className="profile-tagline">sandwich enthusiast · since {me.joinedAt||"2026"}</div>
+                {me.email && <div style={{ fontFamily:"'Courier Prime',monospace", fontSize:11, color:"rgba(125,216,208,0.6)", marginTop:4 }}>{me.email}</div>}
               </div>
               <div className="profile-stats">
                 <div className="stat"><span className="stat-num">{myEntries.length}</span><span className="stat-label">Logged</span></div>
@@ -697,13 +806,20 @@ export default function SandwichDiary() {
                 ? <div className="empty-state"><span className="big">⭐</span>Log some sandwiches!</div>
                 : [...myEntries].sort((a,b) => b.rating-a.rating).slice(0,3).map(renderCard)}
             </div>
+
+            <div className="feed" style={{ paddingTop:0 }}>
+              <div className="section-label">All My Sandwiches ({myEntries.length})</div>
+              {myEntries.length === 0
+                ? <div className="empty-state"><span className="big">📖</span>Nothing logged yet!</div>
+                : myEntries.map(renderCard)}
+            </div>
           </>
         )}
 
         <button className="fab" onClick={() => setShowModal(true)}>+</button>
 
         <div className="bottom-nav">
-          {[["feed","📰","Feed"],["diary","📖","Diary"],["map","🗺","Map"],["people","👥","People"],["profile","🧑","Me"]].map(([id,icon,label]) => (
+          {[["feed","📰","Feed"],["map","🗺","Map"],["people","👥","Artists"],["profile","🧑","Me"]].map(([id,icon,label]) => (
             <button key={id} className={`bnav-btn ${tab===id?"active":""}`} onClick={() => setTab(id)}>
               <span className="icon">{icon}</span>{label}
             </button>
