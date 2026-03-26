@@ -113,7 +113,7 @@ function SandwichMap({ entries, currentUser }) {
 }
 
 // ── Auth Screen ───────────────────────────────────────────────────────────────
-function AuthScreen({ onLogin }) {
+function AuthScreen() {
   const [mode, setMode] = useState("login");
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
@@ -134,11 +134,8 @@ function AuthScreen({ onLogin }) {
     if (!email.trim() || !password.trim()) { setError("Email and password required"); return; }
     setLoading(true); setError("");
     const { error: err } = await supabase.auth.signInWithPassword({ email, password });
-    setLoading(false);
-    if (err) { setError(err.message); return; }
-    const { data: { user } } = await supabase.auth.getUser();
-    const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single();
-    onLogin(profile);
+    if (err) { setLoading(false); setError(err.message); return; }
+    // onAuthStateChange in the main app will handle the rest
   }
 
   async function doSignup() {
@@ -448,19 +445,35 @@ export default function SandwichDiary() {
       else setLoading(false);
     });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
-      if (session) loadProfile(session.user.id);
-      else { setProfile(null); setLoading(false); }
+      if (session) {
+        loadProfile(session.user.id);
+      } else {
+        setProfile(null);
+        setEntries([]);
+        setFollowing([]);
+        setAllUsers([]);
+        setLoading(false);
+      }
     });
     return () => subscription.unsubscribe();
   }, []);
 
   async function loadProfile(userId) {
-    const { data } = await supabase.from("profiles").select("*").eq("id", userId).single();
-    if (data) {
+    try {
+      const { data, error } = await supabase.from("profiles").select("*").eq("id", userId).single();
+      if (error || !data) { setLoading(false); return; }
       setProfile(data);
-      await Promise.all([loadEntries(), loadFollowing(data.username), loadAllUsers(data.username), loadInvites(data.username)]);
+      await Promise.all([
+        loadEntries(),
+        loadFollowing(data.username),
+        loadAllUsers(data.username),
+        loadInvites(data.username)
+      ]);
+    } catch (e) {
+      console.error("loadProfile error:", e);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   async function loadEntries() {
@@ -686,7 +699,7 @@ export default function SandwichDiary() {
   }
 
   if (loading) return <div className="loading-screen">Stacked ★</div>;
-  if (!profile) return <AuthScreen onLogin={p => { setProfile(p); loadProfile(p.id); }} />;
+  if (!profile) return <AuthScreen />;
 
   return (
     <>
