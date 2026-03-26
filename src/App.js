@@ -159,14 +159,16 @@ function AuthScreen({ onLogin }) {
   function doSignup() {
     if (!username.trim() || !password.trim()) { setError("Username and password required"); return; }
     if (username.length < 3) { setError("Username must be at least 3 characters"); return; }
-    const codes = LS.get(INVITES_KEY, []);
-    if (!codes.includes(invite.toUpperCase())) { setError("Invalid invite code"); return; }
     const users = LS.get(USERS_KEY, {});
+    const isFirstUser = Object.keys(users).length === 0;
+    if (!isFirstUser) {
+      const codes = LS.get(INVITES_KEY, []);
+      if (!codes.includes(invite.toUpperCase())) { setError("Invalid invite code"); return; }
+      LS.set(INVITES_KEY, codes.filter(c => c !== invite.toUpperCase()));
+    }
     if (users[username]) { setError("Username already taken"); return; }
     users[username] = { username, emoji, passwordHash: hash(password), joinedAt: new Date().toISOString().split("T")[0] };
     LS.set(USERS_KEY, users);
-    // Remove used invite code
-    LS.set(INVITES_KEY, codes.filter(c => c !== invite.toUpperCase()));
     LS.set(SESSION_KEY, username);
     onLogin(username);
   }
@@ -202,11 +204,18 @@ function AuthScreen({ onLogin }) {
         </div>
 
         {mode === "signup" && <>
-          <div style={{ marginBottom:12 }}>
-            <label style={{ fontFamily:"'Special Elite',serif", fontSize:10, letterSpacing:2, textTransform:"uppercase", color:"#1A2744", display:"block", marginBottom:4 }}>Invite Code</label>
-            <input value={invite} onChange={e => setInvite(e.target.value)} placeholder="e.g. SANDWICH"
-              style={{ width:"100%", fontFamily:"'Courier Prime',monospace", fontSize:13, padding:"8px 10px", border:"2px solid #7DD8D0", borderRadius:2, background:"white", color:"#1A2744", textTransform:"uppercase", letterSpacing:2 }} />
-          </div>
+          {Object.keys(LS.get(USERS_KEY, {})).length > 0 && (
+            <div style={{ marginBottom:12 }}>
+              <label style={{ fontFamily:"'Special Elite',serif", fontSize:10, letterSpacing:2, textTransform:"uppercase", color:"#1A2744", display:"block", marginBottom:4 }}>Invite Code</label>
+              <input value={invite} onChange={e => setInvite(e.target.value)} placeholder="e.g. SANDWICH"
+                style={{ width:"100%", fontFamily:"'Courier Prime',monospace", fontSize:13, padding:"8px 10px", border:"2px solid #7DD8D0", borderRadius:2, background:"white", color:"#1A2744", textTransform:"uppercase", letterSpacing:2 }} />
+            </div>
+          )}
+          {Object.keys(LS.get(USERS_KEY, {})).length === 0 && (
+            <div style={{ marginBottom:12, padding:"10px 12px", background:"#E3F7F5", borderRadius:2, border:"1px solid #7DD8D0", fontFamily:"'Special Elite',serif", fontSize:11, color:"#1A2744", letterSpacing:1 }}>
+              ★ You're the first member — no invite code needed!
+            </div>
+          )}
           <div style={{ marginBottom:16 }}>
             <label style={{ fontFamily:"'Special Elite',serif", fontSize:10, letterSpacing:2, textTransform:"uppercase", color:"#1A2744", display:"block", marginBottom:6 }}>Pick your emoji</label>
             <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
